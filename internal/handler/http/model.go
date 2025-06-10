@@ -2,11 +2,13 @@ package http
 
 // Custom error types for specific business logic failures
 var (
-	ErrItemReserved          = "item already reserved"
-	ErrPurchaseLimitExceeded = "purchase limit exceeded for this user"
-	ErrSaleSoldOut           = "sale completed, items sold out"
-	ErrReservationNotFound   = "Reservation not found or expired"
-	ErrInternalServer        = "Internal server error"
+	ErrItemReserved                  = "item already reserved"
+	ErrPurchaseLimitExceeded         = "purchase limit of 10 items exceeded for this user"
+	ErrConcurrentReservationExceeded = "concurrent reservation limit exceeded for this user"
+	ErrItemAlreadySold               = "item has already been sold"
+	ErrSaleSoldOut                   = "sale completed, items sold out"
+	ErrReservationNotFound           = "Reservation not found or expired"
+	ErrInternalServer                = "Internal server error"
 )
 
 type CheckoutResponse struct {

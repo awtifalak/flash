@@ -83,7 +83,7 @@ func (s *Server) handleCheckout(w http.ResponseWriter, r *http.Request) {
 		s.service.GetCurrentStatus().IncrementFailedCheckouts()
 		// Map service errors to HTTP status codes
 		switch err.Error() {
-		case ErrItemReserved, ErrPurchaseLimitExceeded, ErrSaleSoldOut:
+		case ErrItemReserved, ErrSaleSoldOut, ErrItemAlreadySold, ErrPurchaseLimitExceeded, ErrConcurrentReservationExceeded:
 			respondWithError(w, http.StatusBadRequest, err.Error())
 		default:
 			respondWithError(w, http.StatusInternalServerError, ErrInternalServer)

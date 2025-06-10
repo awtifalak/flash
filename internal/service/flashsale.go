@@ -22,6 +22,8 @@ type RedisRepository interface {
 	GetReservation(ctx context.Context, code string) (string, string, error)
 	DeleteReservation(ctx context.Context, userID, itemID, code string) error
 	ResetAllReservations(ctx context.Context) error
+	MarkItemAsSold(ctx context.Context, itemID string) error
+	IncrementUserPurchaseCount(ctx context.Context, userID string) (int64, error)
 }
 
 // PurchaseResult is a struct to hold data from a successful purchase
@@ -87,6 +89,19 @@ func (s *FlashSaleService) ProcessPurchase(ctx context.Context, code string) (*P
 	// Persist the purchase to the database
 	if err := s.pgRepo.ProcessPurchase(ctx, userID, itemID, code); err != nil {
 		return nil, fmt.Errorf("failed to process purchase in db: %w", err)
+	}
+
+	// After successful DB write, update Redis with permanent state
+	// Mark the item as permanently sold
+	if err := s.redisRepo.MarkItemAsSold(ctx, itemID); err != nil {
+		// Log a critical error. The purchase is in the DB, but Redis state is inconsistent.
+		// A background job could be used to fix such inconsistencies.
+		log.Printf("CRITICAL: inconsistency detected. DB purchase for item %s succeeded, but failed to mark as sold in Redis: %v", itemID, err)
+	}
+
+	// Increment the user's total purchase count
+	if _, err := s.redisRepo.IncrementUserPurchaseCount(ctx, userID); err != nil {
+		log.Printf("CRITICAL: inconsistency detected. DB purchase for user %s succeeded, but failed to increment purchase count in Redis: %v", userID, err)
 	}
 
 	s.status.IncrementSuccessfulPurchases()

@@ -31,18 +31,34 @@ func (r *RedisRepository) CreateReservation(ctx context.Context, userID, itemID,
 	globalKey := "reservations:global"
 	userKey := fmt.Sprintf("reservations:user:%s", userID)
 	itemKey := fmt.Sprintf("item_reservation:%s", itemID)
+	soldItemKey := fmt.Sprintf("item_sold:%s", itemID)
+	userPurchaseCountKey := fmt.Sprintf("user_purchases:%s", userID)
 
 	txf := func(tx *redis.Tx) error {
-		// Check if item was reserved while we were processing
+		// Check if item has already been sold permanently
+		if tx.Exists(ctx, soldItemKey).Val() == 1 {
+			return errors.New("item has already been sold")
+		}
+
+		// Check if item was reserved temporarily
 		if tx.Exists(ctx, itemKey).Val() == 1 {
 			return errors.New("item already reserved")
 		}
-		// Check global and user limits
+		// Check global sale limit
 		if tx.ZCard(ctx, globalKey).Val() >= 10000 {
 			return errors.New("sale completed, items sold out")
 		}
+
+		// Check total purchase limit for the user
+		// Note: .Int64() returns 0 if key doesn't exist, which is the desired behavior.
+		purchasedCount, _ := tx.Get(ctx, userPurchaseCountKey).Int64()
+		if purchasedCount >= 10 {
+			return errors.New("purchase limit of 10 items exceeded for this user")
+		}
+
+		// Check concurrent reservation limit for the user
 		if tx.ZCard(ctx, userKey).Val() >= 10 {
-			return errors.New("purchase limit exceeded for this user")
+			return errors.New("concurrent reservation limit exceeded for this user")
 		}
 
 		// Atomically execute reservation commands
@@ -58,9 +74,10 @@ func (r *RedisRepository) CreateReservation(ctx context.Context, userID, itemID,
 		return err
 	}
 
-	// Retry transaction if itemKey is modified by another process
+	// Retry transaction if any of the watched keys are modified by another process
 	for i := 0; i < 3; i++ {
-		err := r.client.Watch(ctx, txf, itemKey)
+		// Watch all keys that are read before the transaction is executed
+		err := r.client.Watch(ctx, txf, itemKey, soldItemKey, userPurchaseCountKey)
 		if err == nil {
 			return nil // Success
 		}
@@ -103,7 +120,21 @@ func (r *RedisRepository) DeleteReservation(ctx context.Context, userID, itemID,
 	return nil
 }
 
+// MarkItemAsSold sets a permanent key in Redis to mark an item as sold.
+func (r *RedisRepository) MarkItemAsSold(ctx context.Context, itemID string) error {
+	soldItemKey := fmt.Sprintf("item_sold:%s", itemID)
+	// Set without expiration (0)
+	return r.client.Set(ctx, soldItemKey, "sold", 0).Err()
+}
+
+// IncrementUserPurchaseCount increments the total number of items a user has purchased.
+func (r *RedisRepository) IncrementUserPurchaseCount(ctx context.Context, userID string) (int64, error) {
+	userPurchaseCountKey := fmt.Sprintf("user_purchases:%s", userID)
+	return r.client.Incr(ctx, userPurchaseCountKey).Result()
+}
+
 // ResetAllReservations uses pipelining for slightly better performance.
+// Note: This does NOT reset permanent keys like `item_sold` or `user_purchases`.
 func (r *RedisRepository) ResetAllReservations(ctx context.Context) error {
 	patterns := []string{"reservations:user:*", "reservation:*", "item_reservation:*"}
 	pipe := r.client.Pipeline()
@@ -123,6 +154,6 @@ func (r *RedisRepository) ResetAllReservations(ctx context.Context) error {
 	if err != nil && err != redis.Nil {
 		return fmt.Errorf("error executing redis pipeline for reset: %w", err)
 	}
-	log.Println("All reservation keys in Redis have been reset.")
+	log.Println("All temporary reservation keys in Redis have been reset.")
 	return nil
 }
