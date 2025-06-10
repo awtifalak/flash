@@ -55,6 +55,10 @@ func (s *FlashSaleService) CreateReservation(ctx context.Context, userID, itemID
 		return "", fmt.Errorf("sale completed, items sold out")
 	}
 
+	if s.status.GetPurchasedGoods() >= 10000 {
+		return "", fmt.Errorf("sale completed, items sold out")
+	}
+
 	code, err := generateUniqueCode()
 	if err != nil {
 		return "", fmt.Errorf("could not generate code: %w", err)
